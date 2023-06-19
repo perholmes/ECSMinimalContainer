@@ -6,7 +6,7 @@ It's difficult to launch a AWS CloudFormation template that creates an AWS Elast
 
 ## How To Use
 
-After completing the prerequisites below, simply run `build.sh` from a bash shell. You will be asked for:
+After completing the prerequisites below, simply run `build.sh` from a Bash shell. You will be asked for:
 
 * The region (e.g. eu-west-1).
 * The root of an Elastic Container Registry (e.g. 01234567890.dkr.ecr.eu-west-1.amazonaws.com)
@@ -15,14 +15,17 @@ After completing the prerequisites below, simply run `build.sh` from a bash shel
 
 The script builds the included Dockerfile, which is simply an Apache server with a couple of static HTML files for healthchecks. It then pushes it to your Elastic Container Registry, allowing you to reference it in TaskDefinitions in CloudFormation templates.
 
+The container will now respond to health checks on `/index.html` and `/healthcheck.html`. Modify the files in public_html if you need different health checks.
+
 ## Prerequisites
 
 * Install Docker Desktop.
 * Install AWS CLI.
 * Create an Elastic Container Registry called "ecs-minimal-container" in the same region as the CloudFormation template will run.
-* Create an IAM user with the following permissions:
+* Create an IAM user with the following inline policy. Save the Access Key and Secret for entry into the Bash script:
 
-```{
+```
+{
     "Version": "2012-10-17",
     "Statement": [
         {
@@ -38,4 +41,54 @@ The script builds the included Dockerfile, which is simply an Apache server with
             "Resource": "*"
         }
     ]
-}```
+}
+```
+
+## How to reference ECS Minimal Container in TaskDefinitions
+
+Under a TaskDefinition -> ContainerDefinition, simply reference the minimal container image:
+
+`Image: 01234567890.dkr.ecr.eu-west-1.amazonaws.com/ecs-minimal-container:latest`
+
+Additionally, the usual AWS advice about running a curl call on the container won't work with the pure Apache container. Instead, simply echo a neutral status as the container health check:
+
+```
+HealthCheck:
+  Command: [ "CMD-SHELL", "exit 0" ]
+  Interval: 6
+  Retries: 5
+  StartPeriod: 5
+  Timeout: 5
+```
+Example TaskDefinition. **Importantly**, you should configure the TaskDefinition with the memory and CPU capacities that you need for the real task, not just for the minimal image. Once you deploy the correct image after the build pipeline has run, only the image will change. 
+
+```
+  MyTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: service-name-production
+      NetworkMode: bridge
+      RequiresCompatibilities: [ EC2 ]
+      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt MyTaskRole.Arn
+      ContainerDefinitions:
+        - Name: service-name-production
+          Essential: true
+          Image: 01234567890.dkr.ecr.eu-west-1.amazonaws.com/ecs-minimal-container:latest
+          MemoryReservation: 128
+          PortMappings:
+            - ContainerPort: 80
+              Protocol: tcp
+          HealthCheck:
+            Command: [ "CMD-SHELL", "exit 0" ]
+            Interval: 6
+            Retries: 5
+            StartPeriod: 5
+            Timeout: 5
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: /ecs/service-name-production
+              awslogs-region: eu-west-1
+              awslogs-create-group: true
+              awslogs-stream-prefix: ecs
