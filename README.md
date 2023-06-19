@@ -2,18 +2,36 @@
 
 It's difficult to launch a AWS CloudFormation template that creates an AWS Elastic Container Service cluster as well as a build pipeline at the same time. The cluster can only be launched if there are already containers present that will respond to health checks, or the CloudFormation template will hang. Yet, such containers will only be built later by the build pipeline.
 
-**ECS Minimal Container** is a barebones HTTP container that responds to health checks, which can be uploaded ahead of time to an Elastic Container Registry, and referenced in TaskDefinitions in the CloudFormation template. This will allow the CloudFormation to launch. The simultaneously deployed build pipeline can then build the correct images and deploy as normal, replacing the ECS Minimal Containers.
+**ECS Minimal Container** is a barebones HTTP container that responds to health checks, which can be uploaded ahead of time to an Elastic Container Registry, and referenced in TaskDefinitions in the CloudFormation template. This will allow the CloudFormation to launch. Actual images will be deployed once the build system runs.
+
+## Workflow
+
+* You provide a list of container names as a comma-separate list, e.g. "my-service-staging, my-service-production".
+* A repository named after each container is created in ECR.
+* A minimal image is built and pushed for **each container**.
+* The result is a bunch of ECR repositories pre-populated with a first image that's enough of a health check responder that you can boot your CloudFormation template and ECS cluster.
+* You can reference this dummy container in Task Definitions, using my-service-production:latest.
+* Once your build system runs, your properly built images will simply become the new :latest
+
+## Caveats
+
+* This workflow means that CloudFormation is not in charge of creating or destroying your ECR registries. They're created ahead of time in this script so that the dummy image is available for the first run of your CloudFormation. And you're responsible for removing ECR registries.
+* This script creates ECR registries with a lifecycle policy of keeping the latest 5 images and using KMS-encryption using account keys. If you want different settings, they must be configured here in this script and not in CloudFormation. CloudFormation does not own these registries.
 
 ## How To Use
 
-After completing the prerequisites below, simply run `build.sh` from a Bash shell. You will be asked for:
+After completing the prerequisites below, edit `build.sh` to populate the following values (examples provided), so that they don't have to be provided over and over:
 
-* The region (e.g. eu-west-1).
-* The root of an Elastic Container Registry (e.g. 01234567890.dkr.ecr.eu-west-1.amazonaws.com)
-* An AWS Access Key ID.
+export ECR_REGION=eu-west-1
+export ECR_ROOT=01234567890.dkr.ecr.eu-west-1.amazonaws.com
+export AWS_ACCESS_KEY_ID=AKIAT010101010101BD2
+
+Then run `./build.sh`. You will be prompted for:
+
+* A comma-separated list of containers you want to prep ECR registries for.
 * An AWS Secret Key.
 
-The script builds the included Dockerfile, which is simply an Apache server with a couple of static HTML files for healthchecks. It then pushes it to your Elastic Container Registry, allowing you to reference it in TaskDefinitions in CloudFormation templates.
+The script builds the included Dockerfile, which is simply an Apache server with a couple of static HTML files for healthchecks.
 
 The container will now respond to health checks on `/index.html` and `/healthcheck.html`. Modify the files in public_html if you need different health checks.
 
@@ -21,7 +39,6 @@ The container will now respond to health checks on `/index.html` and `/healthche
 
 * Install Docker Desktop.
 * Install AWS CLI.
-* Create an Elastic Container Registry called "ecs-minimal-container" in the same region as the CloudFormation template will run.
 * Create an IAM user with the following inline policy. Save the Access Key and Secret for entry into the Bash script:
 
 ```
@@ -31,12 +48,7 @@ The container will now respond to health checks on `/index.html` and `/healthche
         {
             "Effect": "Allow",
             "Action": [
-                "ecr:CompleteLayerUpload",
-                "ecr:GetAuthorizationToken",
-                "ecr:UploadLayerPart",
-                "ecr:InitiateLayerUpload",
-                "ecr:BatchCheckLayerAvailability",
-                "ecr:PutImage"
+                "ecr:*"
             ],
             "Resource": "*"
         }
@@ -46,9 +58,11 @@ The container will now respond to health checks on `/index.html` and `/healthche
 
 ## How to reference ECS Minimal Container in TaskDefinitions
 
-Under a TaskDefinition -> ContainerDefinition, simply reference the minimal container image:
+The minimal container is simply a first image that already exists in an ECR when your CloudFormation runs for the first time, allowing it to put. Otherwise, CloudFormation will hang and fail.
 
-`Image: 01234567890.dkr.ecr.eu-west-1.amazonaws.com/ecs-minimal-container:latest`
+Under a TaskDefinition -> ContainerDefinition, simply reference the minimal container image. WHen proper images are built, they just become the new :latest.
+
+`Image: 01234567890.dkr.ecr.eu-west-1.amazonaws.com/my-service-production:latest`
 
 Additionally, the usual AWS advice about doing container health check by running a curl call on the container won't work with the pure Apache container. Instead, simply echo a neutral status as the container health check:
 
@@ -60,35 +74,5 @@ HealthCheck:
   StartPeriod: 5
   Timeout: 5
 ```
-Example TaskDefinition. **Importantly**, you should configure the TaskDefinition with the memory and CPU capacities that you need for the real task, not just for the minimal image. Once you deploy the correct image after the build pipeline has run, only the image will change. 
 
-```
-  MyTaskDefinition:
-    Type: AWS::ECS::TaskDefinition
-    Properties:
-      Family: service-name-production
-      NetworkMode: bridge
-      RequiresCompatibilities: [ EC2 ]
-      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
-      TaskRoleArn: !GetAtt MyTaskRole.Arn
-      ContainerDefinitions:
-        - Name: service-name-production
-          Essential: true
-          Image: 01234567890.dkr.ecr.eu-west-1.amazonaws.com/ecs-minimal-container:latest
-          MemoryReservation: 128
-          PortMappings:
-            - ContainerPort: 80
-              Protocol: tcp
-          HealthCheck:
-            Command: [ "CMD-SHELL", "exit 0" ]
-            Interval: 6
-            Retries: 5
-            StartPeriod: 5
-            Timeout: 5
-          LogConfiguration:
-            LogDriver: awslogs
-            Options:
-              awslogs-group: /ecs/service-name-production
-              awslogs-region: eu-west-1
-              awslogs-create-group: true
-              awslogs-stream-prefix: ecs
+**Importantly**, you should configure the TaskDefinition with the memory and CPU capacities that you need for the real task, not just for the minimal image. Once you deploy the correct image after the build pipeline has run, only the image will change. 

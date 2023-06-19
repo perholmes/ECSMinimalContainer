@@ -1,50 +1,57 @@
 #!/bin/bash
 
-# Created by Hollywood Camera Work (www.hollywoodcamerawork.com). MIT License.
+# Created by Per Holmes / Hollywood Camera Work (www.hollywoodcamerawork.com). MIT License.
 
-# This script builds an ecs-minimal-container and uploads it to an Elastic Container Registry.
-
-# PREREQUISITES:
-# - AWS CLI must be installed.
-# - TaskDefinition ContainerDefinition should healthcheck using [ "CMD-SHELL", "exit 0" ].
-#   There's no Curl on the Apache httpd used as the basis.
-# - Create an IAM user "ecr-push" with the following inline policy, which allows pushing to any
-#   repository under the account:
-# {
-#     "Version": "2012-10-17",
-#     "Statement": [
-#         {
-#             "Effect": "Allow",
-#             "Action": [
-#                 "ecr:CompleteLayerUpload",
-#                 "ecr:GetAuthorizationToken",
-#                 "ecr:UploadLayerPart",
-#                 "ecr:InitiateLayerUpload",
-#                 "ecr:BatchCheckLayerAvailability",
-#                 "ecr:PutImage"
-#             ],
-#             "Resource": "*"
-#         }
-#     ]
-# }
+# This script builds an ECS Minimal Container and uploads it to an Elastic Container Registry,
+# allowing a CloudFormation template to boot an ECS cluster before a build pipeline has run for the
+# first time.
+#
+# See https://github.com/perholmes/ECSMinimalContainer for instructions.
 
 set -e
 clear
 export SCRIPTDIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd ${SCRIPTDIR}
 
-echo "Create ecs-minimal-container"
-read -p "Region (e.g. eu-west-1)                                        : " ECR_REGION
-read -p "ECR Root (e.g. 01234567890.dkr.ecr.eu-west-1.amazonaws.com)    : " ECR_ROOT
-read -p "AWS Access Key                                                 : " ACCESS_KEY
-read -p "AWS Secret Key                                                 : " SECRET_KEY
 
-export AWS_ACCESS_KEY_ID="${ACCESS_KEY}"
-export AWS_SECRET_ACCESS_KEY="${SECRET_KEY}"
+export ECR_REGION=eu-west-1
+export ECR_ROOT=01234567890.dkr.ecr.eu-west-1.amazonaws.com
+export AWS_ACCESS_KEY_ID=AKIAT010101010101BD2
+
+
+if [ -z ${SERVICENAME} ]; then
+    read -p "List of repositories to create (comma-separated): " SERVICES
+fi
+
+read -p "AWS Secret Key: " AWS_SECRET_ACCESS_KEY
+
+export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY}"
 export AWS_DEFAULT_REGION="${ECR_REGION}"
 
-docker build -t ecs-minimal-container .
-docker tag ecs-minimal-container:latest ${ECR_ROOT}/ecs-minimal-container:latest
+IFS=', ' read -r -a SERVICEARRAY <<< "$SERVICES"
+for SERVICENAME in "${SERVICEARRAY[@]}"
+do
+    SERVICENAME=$(echo "${SERVICENAME}" | xargs)
 
-aws ecr get-login-password --region ${ECR_REGION} | docker login --username AWS --password-stdin "${ECR_ROOT}"
-docker push ${ECR_ROOT}/ecs-minimal-container:latest
+    echo
+    echo "========= Creating repository $SERVICENAME ========="
+    echo
+
+    docker build -t ${SERVICENAME} .
+    docker tag ${SERVICENAME}:latest ${ECR_ROOT}/${SERVICENAME}:latest
+
+    aws ecr create-repository \
+                --repository-name ${SERVICENAME} \
+                --region ${ECR_REGION} \
+                --encryption-configuration encryptionType=KMS \
+                --image-tag-mutability MUTABLE \
+                --image-scanning-configuration scanOnPush=false || true
+
+    aws ecr put-lifecycle-policy \
+                --repository-name ${SERVICENAME} \
+                --region ${ECR_REGION} \
+                --lifecycle-policy-text "file://lifecyclepolicy.json" || true
+        
+    aws ecr get-login-password --region ${ECR_REGION} | docker login --username AWS --password-stdin "${ECR_ROOT}"
+    docker push ${ECR_ROOT}/${SERVICENAME}:latest
+done
