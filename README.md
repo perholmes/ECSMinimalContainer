@@ -50,7 +50,7 @@ Under a TaskDefinition -> ContainerDefinition, simply reference the minimal cont
 
 `Image: 01234567890.dkr.ecr.eu-west-1.amazonaws.com/ecs-minimal-container:latest`
 
-Additionally, the usual AWS advice about running a curl call on the container won't work with the pure Apache container. Instead, simply echo a neutral status as the container health check:
+Additionally, the usual AWS advice about doing container health check by running a curl call on the container won't work with the pure Apache container. Instead, simply echo a neutral status as the container health check:
 
 ```
 HealthCheck:
