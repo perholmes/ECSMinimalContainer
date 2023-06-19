@@ -35,7 +35,7 @@ Then run `./build.sh`. You will be prompted for:
 
 The script builds the included Dockerfile, which is simply an Apache server with a couple of static HTML files for healthchecks.
 
-The container will now respond to health checks on `/index.html` and `/healthcheck.html`. Modify the files in public_html if you need different health checks.
+The container will now respond to health checks on `/index.html` and `/healthcheck.html`. Modify the files in public-html if you need different health checks.
 
 ## Prerequisites
 
@@ -60,7 +60,7 @@ The container will now respond to health checks on `/index.html` and `/healthche
 
 ## How to reference ECS Minimal Container in TaskDefinitions
 
-The minimal container is simply a first image that already exists in an ECR when your CloudFormation runs for the first time, allowing it to put. Otherwise, CloudFormation will hang and fail.
+The minimal container is simply a first image that already exists in an ECR when your CloudFormation runs for the first time, allowing it to boot. Otherwise, CloudFormation will hang and fail.
 
 Under a TaskDefinition -> ContainerDefinition, simply reference the minimal container image. WHen proper images are built, they just become the new :latest.
 
