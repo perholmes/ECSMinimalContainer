@@ -22,9 +22,11 @@ It's difficult to launch a AWS CloudFormation template that creates an AWS Elast
 
 After completing the prerequisites below, edit `build.sh` to populate the following values (examples provided), so that they don't have to be provided over and over:
 
+```
 export ECR_REGION=eu-west-1
 export ECR_ROOT=01234567890.dkr.ecr.eu-west-1.amazonaws.com
 export AWS_ACCESS_KEY_ID=AKIAT010101010101BD2
+```
 
 Then run `./build.sh`. You will be prompted for:
 
